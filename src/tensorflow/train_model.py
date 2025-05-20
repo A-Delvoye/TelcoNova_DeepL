@@ -7,6 +7,23 @@ from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
 import os
+import tensorflow as tf
+import numpy as np
+from sklearn.metrics import roc_auc_score, f1_score, recall_score, precision_score, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+os.environ["MLFLOW_TRACKING_USERNAME"] = "A-Delvoye"
+os.environ["MLFLOW_TRACKING_PASSWORD"] = os.getenv("MLFLOW_TRACKING_PASSWORD")
+os.environ["MLFLOW_TRACKING_URI"] = (
+    "https://dagshub.com/A-Delvoye/TelcoNova_DeepL.mlflow"
+)
+import mlflow
 
 def make_preprocess_pipeline(numerical_features, categorical_features):
     numerical_transformer = Pipeline(steps=[
@@ -109,6 +126,38 @@ def build_model(X_train):
 
     return model
 
+def evaluate_model_metrics(model, X_test, y_test, threshold=0.5):
+    y_pred_proba = model.predict(X_test).ravel()
+    y_pred = (y_pred_proba >= threshold).astype(int)
+    
+    # Calcul des métriques
+    auc = roc_auc_score(y_test, y_pred_proba)
+    f1 = f1_score(y_test, y_pred)
+    recall = recall_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred)
+    
+    # Matrice de confusion
+    cm = confusion_matrix(y_test, y_pred)
+    
+    # Affichage des résultats
+    print(f"ROC-AUC: {auc:.4f}")
+    print(f"F1-Score: {f1:.4f}")
+    print(f"Recall: {recall:.4f}")
+    print(f"Precision: {precision:.4f}")
+    
+    # Retourner les métriques dans un dictionnaire
+    metrics = {
+        'roc_auc': auc,
+        'f1_score': f1,
+        'recall': recall,
+        'precision': precision,
+        'confusion_matrix': cm,
+        'y_pred_proba': y_pred_proba,
+        'y_pred': y_pred
+    }
+    
+    return metrics
+
 if __name__ == "__main__":
     df = pd.read_csv("data/WA_Fn-UseC_-Telco-Customer-Churn.csv")
     os.environ['CUDA_VISIBLE_DEVICES'] = 'GPU:0'
@@ -122,3 +171,32 @@ if __name__ == "__main__":
         batch_size=16,
         verbose=1
     )
+    metrics = evaluate_model_metrics(model, X_test, y_test)
+
+    with mlflow.start_run(run_name="first_try_vic"):
+        # Log des métriques
+        mlflow.log_metric("roc_auc", metrics["roc_auc"])
+        mlflow.log_metric("f1_score", metrics["f1_score"])
+        mlflow.log_metric("recall", metrics["recall"])
+        mlflow.log_metric("precision", metrics["precision"])
+
+        # Log du modèle (si c’est un modèle sklearn ou compatible)
+        try:
+            mlflow.tensorflow.log_model(model, artifact_path="model")
+        except Exception as e:
+            print(f"Le modèle n'a pas pu être loggé : {e}")
+
+        # Log d'un artefact : matrice de confusion
+        fig, ax = plt.subplots()
+        sns.heatmap(metrics["confusion_matrix"], annot=True, fmt='d', cmap='Blues', ax=ax)
+        ax.set_xlabel('Predicted')
+        ax.set_ylabel('Actual')
+        ax.set_title('Confusion Matrix')
+        fig_path = "confusion_matrix.png"
+        fig.savefig(fig_path)
+        plt.close(fig)
+        mlflow.log_artifact(fig_path)
+
+
+
+
