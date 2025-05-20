@@ -7,6 +7,24 @@ from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
 import os
+import tensorflow as tf
+import numpy as np
+from sklearn.metrics import roc_auc_score, f1_score, recall_score, precision_score, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
+import src.mlflow_script as mlfs
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+os.environ["MLFLOW_TRACKING_USERNAME"] = "A-Delvoye"
+os.environ["MLFLOW_TRACKING_PASSWORD"] = os.getenv("MLFLOW_TRACKING_PASSWORD")
+os.environ["MLFLOW_TRACKING_URI"] = (
+    "https://dagshub.com/A-Delvoye/TelcoNova_DeepL.mlflow"
+)
+import mlflow
 
 def make_preprocess_pipeline(numerical_features, categorical_features):
     numerical_transformer = Pipeline(steps=[
@@ -88,7 +106,7 @@ def preprocess_data(df):
     return df, X_train, X_val, X_test, y_train, y_val, y_test 
 
 
-def build_model(X_train):
+def build_model(X_train, learning_rate=0.001, loss='binary_crossentropy', model_metrics=['accuracy']):
     # Réseau avec 2 couches cachées de 64 neurones chacune
     # et une couche de sortie avec activation softmax pour classification
     model = tf.keras.Sequential([
@@ -100,9 +118,9 @@ def build_model(X_train):
 
     # Définition de la fonction de perte, de l'optimiseur et des métriques
     model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-        loss='binary_crossentropy',
-        metrics=['accuracy']
+        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
+        loss=loss,
+        metrics=model_metrics
     )
 
     model.summary()
@@ -114,11 +132,44 @@ if __name__ == "__main__":
     os.environ['CUDA_VISIBLE_DEVICES'] = 'GPU:0'
     print("GPUs disponibles :", tf.config.list_physical_devices('GPU'))
     df, X_train, X_val, X_test, y_train, y_val, y_test = preprocess_data(df)
-    model = build_model(X_train)
+
+    epochs=50
+    batch_size=16
+    verbose=1
+    learning_rate=0.001
+    loss='binary_crossentropy'
+    model_metrics=['accuracy']
+    optimizer='adam'
+
+
+    model = build_model(X_train,learning_rate, loss, model_metrics)
+
     history = model.fit(
         X_train, y_train,
         validation_data=(X_val, y_val),
-        epochs=100,
-        batch_size=16,
-        verbose=1
+        epochs=epochs,
+        batch_size=batch_size,
+        verbose=verbose
     )
+
+    mlflow_data = mlfs.Mlflow_dict(
+        X_test=X_test,
+        y_test=y_test,
+        params={
+            'learning_rate': learning_rate,
+            'batch_size': batch_size,
+            'epochs': epochs,
+            'optimizer': optimizer
+        },
+        tags={
+            'experiment_name': 'Classification binaire churn',
+            'run_name': 'model_keras_v0',
+            'model_type': 'tensor_flow'
+        }
+    )
+
+    mlfs.log_dagshub(mlflow_data, model)
+
+
+
+
