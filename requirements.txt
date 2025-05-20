@@ -1,1 +1,8 @@
 pandas
+torch
+numpy
+tensorflow
+sklearn
+missingno
+matplotlib
+seaborn
