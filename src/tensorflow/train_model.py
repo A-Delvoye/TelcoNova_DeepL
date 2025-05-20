@@ -127,45 +127,13 @@ def build_model(X_train, learning_rate=0.001, loss='binary_crossentropy', model_
 
     return model
 
-def evaluate_model_metrics(model, X_test, y_test, threshold=0.5):
-    y_pred_proba = model.predict(X_test).ravel()
-    y_pred = (y_pred_proba >= threshold).astype(int)
-    
-    # Calcul des métriques
-    auc = roc_auc_score(y_test, y_pred_proba)
-    f1 = f1_score(y_test, y_pred)
-    recall = recall_score(y_test, y_pred)
-    precision = precision_score(y_test, y_pred)
-    
-    # Matrice de confusion
-    cm = confusion_matrix(y_test, y_pred)
-    
-    # Affichage des résultats
-    print(f"ROC-AUC: {auc:.4f}")
-    print(f"F1-Score: {f1:.4f}")
-    print(f"Recall: {recall:.4f}")
-    print(f"Precision: {precision:.4f}")
-    
-    # Retourner les métriques dans un dictionnaire
-    metrics = {
-        'roc_auc': auc,
-        'f1_score': f1,
-        'recall': recall,
-        'precision': precision,
-        'confusion_matrix': cm,
-        'y_pred_proba': y_pred_proba,
-        'y_pred': y_pred
-    }
-    
-    return metrics
-
 if __name__ == "__main__":
     df = pd.read_csv("data/WA_Fn-UseC_-Telco-Customer-Churn.csv")
     os.environ['CUDA_VISIBLE_DEVICES'] = 'GPU:0'
     print("GPUs disponibles :", tf.config.list_physical_devices('GPU'))
     df, X_train, X_val, X_test, y_train, y_val, y_test = preprocess_data(df)
 
-    epochs=50
+    epochs=30
     batch_size=16
     verbose=1
     learning_rate=0.001
