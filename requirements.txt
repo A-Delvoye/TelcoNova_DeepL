@@ -1,0 +1,5 @@
+pandas==2.2.3
+ipykernel==6.29.5
+scikit-learn==1.6.1
+tensorflow==2.19.0
+tensorflow_cpu==2.19.0
