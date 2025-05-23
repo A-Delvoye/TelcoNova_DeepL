@@ -5,12 +5,14 @@ from sklearn.impute import SimpleImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import train_test_split
-import os
 import tensorflow as tf
 import numpy as np
-from sklearn.metrics import roc_auc_score, f1_score, recall_score, precision_score, confusion_matrix
-import matplotlib.pyplot as plt
-import seaborn as sns
+from tensorflow.keras.callbacks import TensorBoard
+from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard
+import datetime
+import os
 import src.mlflow_script as mlfs
 
 from dotenv import load_dotenv
@@ -23,6 +25,7 @@ os.environ["MLFLOW_TRACKING_URI"] = (
     "https://dagshub.com/A-Delvoye/TelcoNova_DeepL.mlflow"
 )
 import mlflow
+
 
 def make_preprocess_pipeline(numerical_features, categorical_features):
     numerical_transformer = Pipeline(steps=[
@@ -103,75 +106,92 @@ def preprocess_data(df):
 
     return df, X_train, X_val, X_test, y_train, y_val, y_test 
 
-
-def build_model(X_train, learning_rate=0.001, loss='binary_crossentropy', model_metrics=['accuracy']):
-    # Réseau avec 2 couches cachées de 64 neurones chacune
-    # et une couche de sortie avec activation softmax pour classification
-    model = tf.keras.Sequential([
+def build_model(X_train, learning_rate=0.001):
+    model = Sequential([
         tf.keras.layers.Input(shape=(X_train.shape[1],)),
-        tf.keras.layers.Dense(64, activation='relu'),
-        tf.keras.layers.Dense(128, activation='relu'),
-        tf.keras.layers.Dense(64, activation='relu'),
-        tf.keras.layers.Dense(1, activation='sigmoid')
+        
+        Dense(128, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.4),
+        
+        Dense(64, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.3),
+        
+        Dense(32, activation='relu'),
+        BatchNormalization(),
+        Dropout(0.2),
+        
+        Dense(1, activation='sigmoid')  # Binaire
     ])
-
-    # Définition de la fonction de perte, de l'optimiseur et des métriques
+    
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-        loss=loss,
-        metrics=model_metrics
+        loss='binary_crossentropy',
+        metrics=[tf.keras.metrics.Recall(name='recall'), tf.keras.metrics.Precision(name='precision'), 'accuracy']
+    )
+    
+    model.summary()
+    return model
+
+def train_model(model, X_train, y_train, X_val, y_val, epochs=100, batch_size=64):
+    # Répertoires
+    log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    checkpoint_path = "models/best_model.keras"
+    os.makedirs("models", exist_ok=True)
+
+    # Callbacks
+    early_stop = EarlyStopping(monitor='val_recall', patience=10, mode='max', restore_best_weights=True)
+    checkpoint = ModelCheckpoint(filepath=checkpoint_path, monitor='val_recall', mode='max',
+                                 save_best_only=True, verbose=1)
+    tensorboard = TensorBoard(log_dir=log_dir, histogram_freq=1)
+
+    history = model.fit(
+        X_train, y_train,
+        validation_data=(X_val, y_val),
+        epochs=epochs,
+        batch_size=batch_size,
+        callbacks=[early_stop, checkpoint, tensorboard]
     )
 
-    model.summary()
+    return history
 
-    return model
 
 if __name__ == "__main__":
     df = pd.read_csv("data/WA_Fn-UseC_-Telco-Customer-Churn.csv")
     os.environ['CUDA_VISIBLE_DEVICES'] = 'GPU:0'
-    print("GPUs disponibles :", tf.config.list_physical_devices('GPU'))
+    # Prétraitement
     df, X_train, X_val, X_test, y_train, y_val, y_test = preprocess_data(df)
-    for loss in ['binary_focal_crossentropy', 'categorical_hinge', 'dice', 'hinge', 'huber_loss']:
-        try:
-            epochs=30
-            batch_size=16
-            verbose=1
-            learning_rate=0.001
-            # loss='binary_crossentropy'
-            model_metrics=['accuracy']
-            optimizer='adam'
 
+    # Construction du modèle
+    model = build_model(X_train)
 
-            model = build_model(X_train,learning_rate, loss, model_metrics)
+    # Entraînement avec TensorBoard
+    history = train_model(model, X_train, y_train, X_val, y_val)
 
-            history = model.fit(
-                X_train, y_train,
-                validation_data=(X_val, y_val),
-                epochs=epochs,
-                batch_size=batch_size,
-                verbose=verbose
-            )
+    epochs=30
+    batch_size=16
+    verbose=1
+    learning_rate=0.001
+    loss='binary_crossentropy'
+    model_metrics=['accuracy']
+    optimizer='adam'
 
-            mlflow_data = mlfs.Mlflow_dict(
-                X_test=X_test,
-                y_test=y_test,
-                params={
-                    'learning_rate': learning_rate,
-                    'batch_size': batch_size,
-                    'epochs': epochs,
-                    'optimizer': optimizer,
-                    'loss': loss
-                },
-                tags={
-                    'experiment_name': 'Classification binaire churn',
-                    'run_name': f"model_keras_{loss}_v0",
-                    'model_type': 'tensor_flow'
-                }
-            )
+    mlflow_data = mlfs.Mlflow_dict(
+        X_test=X_test,
+        y_test=y_test,
+        params={
+            'learning_rate': learning_rate,
+            'batch_size': batch_size,
+            'epochs': epochs,
+            'optimizer': optimizer,
+            'loss': loss
+        },
+        tags={
+            'experiment_name': 'Classification binaire churn',
+            'run_name': f"model_keras_{loss}_v0",
+            'model_type': 'tensor_flow'
+        }
+    )
 
-            mlfs.log_dagshub(mlflow_data, model)
-        except:
-            continue
-
-
-
+    mlfs.log_dagshub(mlflow_data, model)
