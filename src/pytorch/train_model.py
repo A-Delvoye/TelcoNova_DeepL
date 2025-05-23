@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import src.mlflow_script as mlfs
 import os
+import torch
+import torch.nn as nn
 
 from dotenv import load_dotenv
 
@@ -105,75 +107,128 @@ def preprocess_data(df):
 
     return df, X_train, X_val, X_test, y_train, y_val, y_test 
 
+class NeuralNetworkClassificationModel(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(NeuralNetworkClassificationModel, self).__init__()
+        self.input_layer = nn.Linear(input_dim, 128)
+        self.hidden_layer1 = nn.Linear(128, 64)
+        self.output_layer = nn.Linear(64, output_dim)
+        self.relu = nn.ReLU()
+    
+    def forward(self, x):
+        out = self.relu(self.input_layer(x))
+        out = self.relu(self.hidden_layer1(out))
+        out = self.output_layer(out)
+        return out
 
-def build_model(X_train, learning_rate=0.001, loss='binary_crossentropy', model_metrics=['accuracy']):
-    # Réseau avec 2 couches cachées de 64 neurones chacune
-    # et une couche de sortie avec activation softmax pour classification
-    model = tf.keras.Sequential([
-        tf.keras.layers.Input(shape=(X_train.shape[1],)),
-        tf.keras.layers.Dense(64, activation='relu'),
-        tf.keras.layers.Dense(128, activation='relu'),
-        tf.keras.layers.Dense(64, activation='relu'),
-        tf.keras.layers.Dense(1, activation='sigmoid')
-    ])
+def build_model(X_train, y_train, X_test, y_test, learning_rate=0.001, num_epochs=30):
+    # Vérifier la forme des données d'entrée
+    input_dim = X_train.shape[1]  # Nombre de features
+    
+    # Déterminer le nombre de classes pour la sortie
+    if len(y_train.unique()) > 2:
+        output_dim = len(y_train.unique())  # Classification multi-classes
+    else:
+        output_dim = 1  # Classification binaire
+    
 
-    # Définition de la fonction de perte, de l'optimiseur et des métriques
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
-        loss=loss,
-        metrics=model_metrics
-    )
+    X_train = torch.FloatTensor(X_train)
+    X_test = torch.FloatTensor(X_test)
+    y_train = torch.LongTensor(y_train)
+    y_test = torch.LongTensor(y_test)
 
-    model.summary()
 
+    # Initialiser le modèle
+    model = NeuralNetworkClassificationModel(input_dim, output_dim)
+    
+    # Définir la fonction de perte selon le type de classification
+    if output_dim > 1:
+        criterion = nn.CrossEntropyLoss()
+    else:
+        criterion = nn.BCEWithLogitsLoss()
+    
+    # Optimiseur
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    
+    # Stocker les pertes pour visualisation
+    train_losses = np.zeros(num_epochs)
+    test_losses = np.zeros(num_epochs)
+    
+    # Boucle d'entraînement
+    for epoch in range(num_epochs):
+        # Passage en mode entraînement
+        model.train()
+        
+        # Réinitialiser les gradients
+        optimizer.zero_grad()
+        
+        # Forward pass
+        output_train = model(X_train)
+        
+        # S'assurer que les dimensions correspondent pour la fonction de perte
+        if output_dim == 1:
+            loss_train = criterion(output_train.squeeze(), y_train.float())
+        else:
+            loss_train = criterion(output_train, y_train)
+        
+        # Backward pass et mise à jour des poids
+        loss_train.backward()
+        optimizer.step()
+        
+        # Évaluation sur les données de test (sans calculer de gradients)
+        with torch.no_grad():
+            model.eval()
+            output_test = model(X_test)
+            
+            if output_dim == 1:
+                loss_test = criterion(output_test.squeeze(), y_test.float())
+            else:
+                loss_test = criterion(output_test, y_test)
+        
+        # Enregistrer les pertes
+        train_losses[epoch] = loss_train.item()
+        test_losses[epoch] = loss_test.item()
+        
+        # Afficher les pertes toutes les 5 époques
+        if (epoch + 1) % 5 == 0:
+            print(f'Époque [{epoch+1}/{num_epochs}], Perte train: {loss_train.item():.4f}, Perte test: {loss_test.item():.4f}')
+        
     return model
+    
 
 if __name__ == "__main__":
     df = pd.read_csv("data/WA_Fn-UseC_-Telco-Customer-Churn.csv")
     os.environ['CUDA_VISIBLE_DEVICES'] = 'GPU:0'
     print("GPUs disponibles :", tf.config.list_physical_devices('GPU'))
     df, X_train, X_val, X_test, y_train, y_val, y_test = preprocess_data(df)
-    for loss in ['binary_focal_crossentropy', 'categorical_hinge', 'dice', 'hinge', 'huber_loss']:
-        try:
-            epochs=30
-            batch_size=16
-            verbose=1
-            learning_rate=0.001
-            # loss='binary_crossentropy'
-            model_metrics=['accuracy']
-            optimizer='adam'
+
+    epochs=30
+    verbose=1
+    learning_rate=0.001
+    loss='CrossEntropyLoss'
+    optimizer='adam'
 
 
-            model = build_model(X_train,learning_rate, loss, model_metrics)
+    model = build_model(X_train, y_train, X_test, y_test, learning_rate, epochs)
 
-            history = model.fit(
-                X_train, y_train,
-                validation_data=(X_val, y_val),
-                epochs=epochs,
-                batch_size=batch_size,
-                verbose=verbose
-            )
+    mlflow_data = mlfs.Mlflow_dict(
+        X_test=X_test,
+        y_test=y_test,
+        params={
+            'learning_rate': learning_rate,
+            'epochs': epochs,
+            'optimizer': optimizer,
+            "loss" : loss
+        },
+        tags={
+            'experiment_name': 'Classification binaire churn',
+            'run_name': 'model_torch_v0',
+            'model_type': 'torch'
+        }
+    )
 
-            mlflow_data = mlfs.Mlflow_dict(
-                X_test=X_test,
-                y_test=y_test,
-                params={
-                    'learning_rate': learning_rate,
-                    'batch_size': batch_size,
-                    'epochs': epochs,
-                    'optimizer': optimizer,
-                    'loss': loss
-                },
-                tags={
-                    'experiment_name': 'Classification binaire churn',
-                    'run_name': f"model_keras_{loss}_v0",
-                    'model_type': 'tensor_flow'
-                }
-            )
+    mlfs.log_dagshub(mlflow_data, model)
 
-            mlfs.log_dagshub(mlflow_data, model)
-        except:
-            continue
 
 
 
